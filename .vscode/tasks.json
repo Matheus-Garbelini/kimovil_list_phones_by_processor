@@ -6,7 +6,7 @@
         {
             "label": "Run",
             "type": "shell",
-            "command": "clear && bun run list_phones_by_chipset.js",
+            "command": "clear && bun run list_phones_by_processor.js",
             "problemMatcher": [],
             "group": {
                 "kind": "test",
@@ -16,7 +16,7 @@
         {
             "label": "Build",
             "type": "shell",
-            "command": "clear && bun build list_phones_by_chipset.js",
+            "command": "clear && bun build list_phones_by_processor.js",
             "problemMatcher": [],
             "group": {
                 "kind": "build",

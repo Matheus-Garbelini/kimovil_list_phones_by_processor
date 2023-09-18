@@ -1,6 +1,6 @@
 {
-  "name": "kimovil_list_phones_by_chipset",
-  "module": "list_phones_by_chipset.js",
+  "name": "kimovil_list_phones_by_processor",
+  "module": "list_phones_by_processor.js",
   "devDependencies": {
     "bun-types": "latest"
   },
