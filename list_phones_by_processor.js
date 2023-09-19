@@ -154,6 +154,8 @@ const processors_query_list = [
     'Qualcomm Snapdragon 888+',
     'Qualcomm Snapdragon 8 Gen1',
     'Qualcomm Snapdragon 8+ Gen 1',
+    'Apple A14',
+    'Apple A15',
     'Dimensity 900'
 ]
 
