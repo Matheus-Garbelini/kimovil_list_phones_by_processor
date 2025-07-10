@@ -67,13 +67,28 @@ def filter_response(html, attr_filter, attr_filter_value, child_level=0, attr_to
     return results
 
 async def fetch_with_retry(session, url, retry_delay=FETCH_RETRY_MS, max_retries=5):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': 'https://www.kimovil.com/en/compare-smartphones',
+    }
     for attempt in range(max_retries):
-        async with session.get(url) as resp:
+        async with session.get(url, headers=headers) as resp:
             if resp.status == 429:
                 print('Too many requests, trying again in {} seconds'.format(retry_delay // 1000))
                 await asyncio.sleep(retry_delay / 1000)
                 continue
-            return await resp.json()
+            if resp.status == 403:
+                print(f'403 Forbidden for {url}. Trying again in {retry_delay // 1000} seconds.')
+                await asyncio.sleep(retry_delay / 1000)
+                continue
+            try:
+                return await resp.json()
+            except Exception as e:
+                text = await resp.text()
+                print(f'Error decoding JSON from {url}: {e}\nResponse text (truncated): {text[:500]}')
+                return None
     print('Failed to fetch after retries:', url)
     return None
 
