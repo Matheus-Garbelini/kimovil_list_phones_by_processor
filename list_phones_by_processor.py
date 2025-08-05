@@ -145,12 +145,22 @@ def print_stats(phone_models_list):
 # ------------------- Main Routine -------------------
 async def main():
     print('Fetching all processors models...')
-    async with httpx.AsyncClient() as client:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    async with httpx.AsyncClient(headers=headers) as client:
         res = await client.get('https://www.kimovil.com/en/compare-smartphones?xhr=1')
         if res.status_code == 429:
             print('Too many requests, try again later!', file=sys.stderr)
             sys.exit(1)
-        res_json = res.json()
+        if res.status_code != 200:
+            print(f'Error: Received status code {res.status_code}', file=sys.stderr)
+            print(res.text)
+            sys.exit(1)
+        try:
+            res_json = res.json()
+        except Exception as e:
+            print(f'Error decoding JSON: {e}', file=sys.stderr)
+            print(res.text)
+            sys.exit(1)
         # Create maps of processors name to kimovil id
         processors_list = filter_response(res_json['filters'], 'data-for', 'f_dpg+id', 0, 'value')
         print(f'[OK] Fetched processors IDs: {len(processors_list)}')
