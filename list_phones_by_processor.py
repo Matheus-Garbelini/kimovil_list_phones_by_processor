@@ -42,6 +42,9 @@ progress_data = {
     'errors': 0
 }
 
+# Global CSV filename for incremental saving
+csv_filename = None
+
 
 def load_config(config_file: str) -> Dict:
     """
@@ -180,10 +183,10 @@ def filter_response(html: str, attr_filter: str, attr_filter_value: str,
 
 async def fill_proc_pages(page: Page, proc_list: Dict, proc_name: str,
                          start_page: int, band_filter: str, processors_list: Dict[str, str],
-                         progress: Progress, task_id: int, fetch_delay_ms: int = 100,
-                         fetch_retry_ms: int = 5000) -> None:
+                         progress: Progress, task_id: int, csv_filename: str = None,
+                         fetch_delay_ms: int = 100, fetch_retry_ms: int = 5000) -> None:
     """
-    Recursively fetch all pages for a specific processor and band filter
+    Recursively fetch all pages for a specific processor and band filter, saving each page immediately
     
     Args:
         page: Playwright page for making requests
@@ -194,6 +197,7 @@ async def fill_proc_pages(page: Page, proc_list: Dict, proc_name: str,
         processors_list: Mapping of processor names to IDs
         progress: Rich progress instance
         task_id: Progress task ID
+        csv_filename: Path to CSV file for incremental saving
     """
     global progress_data
     
@@ -225,7 +229,7 @@ async def fill_proc_pages(page: Page, proc_list: Dict, proc_name: str,
             progress_data['rate_limited'] += 1
             progress.update(task_id, description=f"⏳ Rate limited - waiting {fetch_retry_ms/1000:.0f}s...")
             await asyncio.sleep(fetch_retry_ms / 1000)
-            await fill_proc_pages(page, proc_list, proc_name, start_page, band_filter, processors_list, progress, task_id, fetch_delay_ms, fetch_retry_ms)
+            await fill_proc_pages(page, proc_list, proc_name, start_page, band_filter, processors_list, progress, task_id, csv_filename, fetch_delay_ms, fetch_retry_ms)
             return
         
         if response.status != 200:
@@ -250,8 +254,17 @@ async def fill_proc_pages(page: Page, proc_list: Dict, proc_name: str,
             progress.update(task_id, description=f"✅ {proc_name} - {band_filter} completed")
             return
         
+        # Store the page content
         proc_list[proc_name][band_filter][start_page] = res_json['content']
         progress_data['pages_fetched'] += 1
+        
+        # Process and save this page's data immediately to CSV
+        if csv_filename and res_json['content']:
+            page_models = filter_response(res_json['content'], 'class', 'device-name', 1)
+            if page_models:
+                records_added = append_processor_to_csv(csv_filename, proc_name, page_models)
+                progress.update(task_id,
+                              description=f"💾 {proc_name} P{start_page + 1}: {records_added} models saved")
         
         progress.update(task_id,
                       description=f"📄 {proc_name} - Page {start_page + 1}",
@@ -262,7 +275,7 @@ async def fill_proc_pages(page: Page, proc_list: Dict, proc_name: str,
         if next_page_url and '.' in next_page_url:
             new_page_idx = int(next_page_url.split('.')[-1]) - 1
             await asyncio.sleep(fetch_delay_ms / 1000)  # Sleep to avoid too many requests (429)
-            await fill_proc_pages(page, proc_list, proc_name, new_page_idx, band_filter, processors_list, progress, task_id, fetch_delay_ms, fetch_retry_ms)
+            await fill_proc_pages(page, proc_list, proc_name, new_page_idx, band_filter, processors_list, progress, task_id, csv_filename, fetch_delay_ms, fetch_retry_ms)
             
     except Exception as e:
         progress_data['errors'] += 1
@@ -271,14 +284,15 @@ async def fill_proc_pages(page: Page, proc_list: Dict, proc_name: str,
 
 
 async def fill_all_proc_pages(proc_query_list: Dict, band_query_list: Dict, processors_list: Dict[str, str],
-                             fetch_delay_ms: int = 100, fetch_retry_ms: int = 5000) -> None:
+                             csv_filename: str = None, fetch_delay_ms: int = 100, fetch_retry_ms: int = 5000) -> None:
     """
-    Fill all processor pages with data from kimovil.com
+    Fill all processor pages with data from kimovil.com and save to CSV incrementally
     
     Args:
         proc_query_list: Dictionary of processors to query
         band_query_list: Dictionary of bands to query
         processors_list: Mapping of processor names to IDs
+        csv_filename: Path to CSV file for incremental saving
     """
     total_tasks = len(proc_query_list) * len(band_query_list)
     
@@ -334,6 +348,9 @@ async def fill_all_proc_pages(proc_query_list: Dict, band_query_list: Dict, proc
             
             try:
                 for proc_name, proc_pages in proc_query_list.items():
+                    # Process each processor completely before moving to the next
+                    processor_task = progress.add_task(f"🔧 {proc_name[:25]}...", total=len(proc_pages))
+                    
                     for band_filter in proc_pages.keys():
                         task_desc = f"📱 {proc_name[:20]}... - {band_filter}"
                         task_id = progress.add_task(task_desc, total=None)
@@ -342,23 +359,55 @@ async def fill_all_proc_pages(proc_query_list: Dict, band_query_list: Dict, proc
                         page = await context.new_page()
                         
                         try:
-                            await fill_proc_pages(page, proc_query_list, proc_name, 0, band_filter, processors_list, progress, task_id, fetch_delay_ms, fetch_retry_ms)
+                            await fill_proc_pages(page, proc_query_list, proc_name, 0, band_filter, processors_list, progress, task_id, csv_filename, fetch_delay_ms, fetch_retry_ms)
                         finally:
                             await page.close()
                         
                         progress.update(main_task, advance=1)
+                        progress.update(processor_task, advance=1)
                         progress.remove_task(task_id)
                         
                         await asyncio.sleep(fetch_delay_ms / 1000)  # Sleep to avoid too many requests (429)
+                    
+                    # Data already saved per page, just complete the processor task
+                    progress.update(processor_task, description=f"✅ Completed {proc_name[:25]}")
+                    progress.remove_task(processor_task)
             
             finally:
                 await context.close()
                 await browser.close()
 
 
+def process_and_save_processor_data(proc_name: str, proc_pages: Dict, csv_filename: str) -> List[str]:
+    """
+    Process a single processor's data (data already saved per page during fetching)
+    
+    Args:
+        proc_name: Name of the processor
+        proc_pages: Dictionary containing fetched page data for the processor
+        csv_filename: Path to the CSV file (not used, data already saved)
+    
+    Returns:
+        List of phone models for this processor
+    """
+    # Filter and concatenate array of phone models per processor
+    arr = []
+    for band_name, band_pages in proc_pages.items():
+        for page_idx, page_content in band_pages.items():
+            if page_content is None:
+                continue
+            models = filter_response(page_content, 'class', 'device-name', 1)
+            arr.extend(models)
+    
+    # Remove duplicated entries (data already saved per page)
+    proc_models = list(set(arr))
+    
+    return proc_models
+
+
 def get_proc_phone_models(proc_query_list: Dict) -> Dict[str, List[str]]:
     """
-    Extract phone models from the fetched processor data
+    Extract phone models from the fetched processor data (data already saved during fetching)
     
     Args:
         proc_query_list: Dictionary containing fetched processor data
@@ -384,7 +433,7 @@ def get_proc_phone_models(proc_query_list: Dict) -> Dict[str, List[str]]:
         for proc_name, proc_pages in proc_query_list.items():
             progress.update(task, description=f"📱 Processing {proc_name[:30]}...")
             
-            # Filter and concatenate array of phone models per processor
+            # Just extract models without saving (already saved during fetching)
             arr = []
             for band_name, band_pages in proc_pages.items():
                 for page_idx, page_content in band_pages.items():
@@ -400,9 +449,74 @@ def get_proc_phone_models(proc_query_list: Dict) -> Dict[str, List[str]]:
     return proc_models
 
 
+def create_csv_file(filename: str = None) -> str:
+    """
+    Create a new CSV file with headers
+    
+    Args:
+        filename: Optional filename for the CSV file
+    
+    Returns:
+        The filename of the created CSV file
+    """
+    if filename is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"kimovil_phone_data_{timestamp}.csv"
+    
+    # Write CSV headers
+    with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+        fieldnames = ['Processor', 'Brand', 'Model', 'Full_Name']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+    
+    return filename
+
+
+def append_processor_to_csv(filename: str, proc_name: str, proc_models: List[str]) -> int:
+    """
+    Append processor phone models data to existing CSV file
+    
+    Args:
+        filename: Path to the CSV file
+        proc_name: Name of the processor
+        proc_models: List of phone models for this processor
+    
+    Returns:
+        Number of records added
+    """
+    if not proc_models:
+        return 0
+    
+    # Prepare data for CSV
+    csv_data = []
+    for model in sorted(set(proc_models)):  # Remove duplicates within this batch
+        # Extract brand (first word) and model name
+        parts = model.split(' ', 1)
+        brand = parts[0] if parts else 'Unknown'
+        model_name = parts[1] if len(parts) > 1 else model
+        
+        csv_data.append({
+            'Processor': proc_name,
+            'Brand': brand,
+            'Model': model_name,
+            'Full_Name': model
+        })
+    
+    # Sort by brand, then by model
+    csv_data.sort(key=lambda x: (x['Brand'], x['Model']))
+    
+    # Append to CSV file
+    with open(filename, 'a', newline='', encoding='utf-8') as csvfile:
+        fieldnames = ['Processor', 'Brand', 'Model', 'Full_Name']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writerows(csv_data)
+    
+    return len(csv_data)
+
+
 def export_to_csv(phone_models_list: Dict[str, List[str]], filename: str = None) -> str:
     """
-    Export phone models data to CSV format
+    Export phone models data to CSV format (legacy function for compatibility)
     
     Args:
         phone_models_list: Dictionary mapping processor names to phone model lists
@@ -415,32 +529,12 @@ def export_to_csv(phone_models_list: Dict[str, List[str]], filename: str = None)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"kimovil_phone_data_{timestamp}.csv"
     
-    # Prepare data for CSV
-    csv_data = []
+    # Create new file with headers
+    create_csv_file(filename)
+    
+    # Append all processor data
     for proc_name, proc_models in phone_models_list.items():
-        for model in sorted(proc_models):
-            # Extract brand (first word) and model name
-            parts = model.split(' ', 1)
-            brand = parts[0] if parts else 'Unknown'
-            model_name = parts[1] if len(parts) > 1 else model
-            
-            csv_data.append({
-                'Processor': proc_name,
-                'Brand': brand,
-                'Model': model_name,
-                'Full_Name': model
-            })
-    
-    # Sort by processor, then by brand, then by model
-    csv_data.sort(key=lambda x: (x['Processor'], x['Brand'], x['Model']))
-    
-    # Write to CSV file
-    with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['Processor', 'Brand', 'Model', 'Full_Name']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        
-        writer.writeheader()
-        writer.writerows(csv_data)
+        append_processor_to_csv(filename, proc_name, proc_models)
     
     return filename
 
@@ -510,17 +604,19 @@ def print_beautiful_stats(phone_models_list: Dict[str, List[str]]) -> None:
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
             console.print(f"   {medal} [bold]{proc_name}[/bold]: [magenta]{len(models)}[/magenta] models")
     
-    # Export to CSV
+    # CSV export summary (data already saved incrementally)
     if phone_models_list:
-        console.print(f"\n💾 [bold blue]EXPORTING DATA[/bold blue]")
+        console.print(f"\n💾 [bold blue]CSV EXPORT COMPLETE[/bold blue]")
         try:
-            csv_filename = export_to_csv(phone_models_list)
             total_records = sum(len(models) for models in phone_models_list.values())
-            console.print(f"   ✅ [green]Data exported to:[/green] [bold cyan]{csv_filename}[/bold cyan]")
+            file_size = os.path.getsize(csv_filename) / 1024  # Size in KB
+            console.print(f"   ✅ [green]Data saved to:[/green] [bold cyan]{csv_filename}[/bold cyan]")
             console.print(f"   📊 [green]Total records:[/green] [bold magenta]{total_records}[/bold magenta]")
-            console.print(f"   📁 [green]Format:[/green] CSV with columns: Processor, Brand, Model, Full_Name")
+            console.print(f"   📁 [green]File size:[/green] [bold yellow]{file_size:.1f} KB[/bold yellow]")
+            console.print(f"   📋 [green]Format:[/green] CSV with columns: Processor, Brand, Model, Full_Name")
+            console.print(f"   💡 [blue]Data was saved incrementally during processing[/blue]")
         except Exception as e:
-            console.print(f"   ❌ [red]Export failed:[/red] {str(e)}")
+            console.print(f"   ❌ [red]Error accessing CSV file:[/red] {str(e)}")
     else:
         console.print(f"\n⚠️  [yellow]No data to export[/yellow]")
 
@@ -685,10 +781,40 @@ async def main():
     
     console.print(f"\n🚀 [bold green]Starting data collection for {len(proc_query_list)} processors...[/bold green]")
     
-    # Fetch all data
-    await fill_all_proc_pages(proc_query_list, band_query_list, processors_list, FETCH_DELAY_MS, FETCH_RETRY_MS)
+    # Create CSV file with headers at the beginning
+    global csv_filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_filename = f"kimovil_phone_data_{timestamp}.csv"
     
-    # Process results
+    # Check if a CSV file with similar name already exists and ask user
+    existing_files = [f for f in os.listdir('.') if f.startswith('kimovil_phone_data_') and f.endswith('.csv')]
+    if existing_files:
+        console.print(f"\n💾 [yellow]Found existing CSV files:[/yellow]")
+        for file in existing_files[-3:]:  # Show last 3 files
+            try:
+                file_size = os.path.getsize(file) / 1024  # Size in KB
+                console.print(f"   • {file} ({file_size:.1f} KB)")
+            except OSError:
+                console.print(f"   • {file}")
+        console.print(f"\n❓ [bold yellow]Continue with new file {csv_filename}? (Y/n):[/bold yellow] ", end="")
+        try:
+            response = input().strip().lower()
+            if response in ['n', 'no']:
+                console.print("👋 [yellow]Operation cancelled by user.[/yellow]")
+                sys.exit(0)
+        except KeyboardInterrupt:
+            console.print("\n👋 [yellow]Operation cancelled by user.[/yellow]")
+            sys.exit(0)
+    
+    # Create the CSV file with headers
+    csv_filename = create_csv_file(csv_filename)
+    console.print(f"📄 [bold cyan]Created CSV file: {csv_filename}[/bold cyan]")
+    console.print("💡 [blue]Data will be saved incrementally as processors are processed[/blue]")
+    
+    # Fetch all data and save incrementally during fetching
+    await fill_all_proc_pages(proc_query_list, band_query_list, processors_list, csv_filename, FETCH_DELAY_MS, FETCH_RETRY_MS)
+    
+    # Extract final results (data already saved to CSV during fetching)
     phone_models_list = get_proc_phone_models(proc_query_list)
     
     # Print beautiful statistics

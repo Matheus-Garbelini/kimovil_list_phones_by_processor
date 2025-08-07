@@ -11,7 +11,7 @@ A Python web scraper that fetches phone data from kimovil.com based on specific 
 # Activate environment 
 source venv/bin/activate
 
-# Run the thing
+# Run
 python list_phones_by_processor.py
 ```
 
@@ -26,9 +26,7 @@ That's it. Go grab coffee while it scrapes ☕
 
 ## ⚙️ Customization
 
-Want different processors? Edit the `processors_query_list` in [`list_phones_by_processor.py`](list_phones_by_processor.py:38).
-
-Want different 5G bands? Edit `bands_query_list` in the same file.
+Want different processors or bands? Edit the `config.yaml` file.
 
 ## 🤷 FAQ
 
