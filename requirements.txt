@@ -1,0 +1,17 @@
+# Core HTTP and async functionality - Playwright for browser automation
+playwright>=1.40.0,<2.0.0
+
+# HTML parsing
+beautifulsoup4>=4.11.0,<5.0.0
+lxml>=4.9.0,<6.0.0
+
+# terminal output and progress bars
+rich>=13.0.0,<15.0.0
+tqdm>=4.64.0,<5.0.0
+
+# YAML configuration support
+pyyaml>=6.0,<7.0.0
+
+# Additional utilities for better compatibility
+typing-extensions>=4.0.0; python_version < "3.8"
+asyncio-compat>=0.1.2; python_version < "3.7"

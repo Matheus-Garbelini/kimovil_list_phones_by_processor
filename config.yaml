@@ -1,0 +1,46 @@
+# Default configuration for Kimovil Phone Data Fetcher
+# This file contains the default processors and 5G bands to query
+
+# List of 5G frequency bands to filter phones by
+bands:
+  - fe_bands-nr-b78-3500
+  - fe_bands-nr-b41-2500
+
+# List of processors/chipsets to query for phone models
+processors:
+  - Qualcomm Snapdragon 865
+  - Qualcomm Snapdragon 865+
+  - Qualcomm Snapdragon 870
+  - Qualcomm Snapdragon 888
+  - Qualcomm Snapdragon 888+
+  - Qualcomm Snapdragon 8 Gen1
+  - Qualcomm Snapdragon 8+ Gen 1
+  - Qualcomm Snapdragon 4 Gen1
+  - Qualcomm Snapdragon 480
+  - Qualcomm Snapdragon 690 5G
+  - Qualcomm Snapdragon 695 5G
+  - Qualcomm Snapdragon 750G
+  - Qualcomm Snapdragon 765
+  - Qualcomm Snapdragon 778G
+  - Qualcomm Snapdragon 780G
+  - Qualcomm Snapdragon 855
+  - Qualcomm Snapdragon 855+
+  - Qualcomm Snapdragon 860
+  - Qualcomm Snapdragon 870
+  - Qualcomm Snapdragon 4 Gen2
+  - Qualcomm Snapdragon 8 Gen2
+  - Apple A14
+  - Apple A15
+  - Dimensity 700
+  - Dimensity 800
+  - Dimensity 900
+  - Dimensity 810
+  - Dimensity 820
+  - Dimensity 930
+  - Dimensity 1050
+  - Dimensity 1100
+  - Dimensity 1200
+
+# Additional configuration
+fetch_delay_ms: 100
+fetch_retry_ms: 5000
